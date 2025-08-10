@@ -1,3 +1,6 @@
+# Telugu Lens - Complete Requirements File
+# =====================================
+
 # Core Streamlit Dependencies
 streamlit>=1.28.0
 pandas>=1.5.0
@@ -5,14 +8,24 @@ pillow>=9.0.0
 numpy>=1.21.0
 
 # AI/ML Dependencies (for image captioning features)
+# For CPU-only installation, use: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
 transformers>=4.21.0
 
-# Additional utilities
-uuid
-hashlib
-glob
-datetime
-json
-os
-sys
+# Image Processing
+pillow>=9.0.0
+
+# Data Handling
+pandas>=1.5.0
+numpy>=1.21.0
+
+# Additional Python Libraries (usually included with Python, but listed for clarity)
+# Note: These are typically part of Python standard library, but some environments may need explicit installation
+requests>=2.25.0
+
+# Optional: For better performance and additional features
+# Uncomment if needed:
+# accelerate>=0.20.0  # For faster transformers inference
+# scipy>=1.8.0        # For advanced numerical operations
