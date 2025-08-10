@@ -1,4 +1,4 @@
-# Name-the-object-telugu-edition
+
 # 🏷️ Name The Object: Telugu Edition
 
 A **crowdsourced AI-powered platform** to preserve Telugu dialects — by collecting and comparing how people across different regions name traditional household or cultural items.
