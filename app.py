@@ -238,33 +238,62 @@ st.markdown("""
     }
     
     .browse-card {
-        background: linear-gradient(145deg, #ffffff, #f8f9fa);
-        padding: 1rem;
-        border-radius: 12px;
-        border: 2px solid #e9ecef;
-        margin: 0.5rem 0;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.1);
-        font-family: 'Poppins', sans-serif;
-        transition: all 0.3s ease;
-        position: relative;
-        overflow: hidden;
-    }
-    
-    .browse-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
-        border-color: #667eea;
-    }
-    
-    .browse-card::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        right: 0;
-        height: 4px;
-        background: linear-gradient(90deg, #667eea, #764ba2);
-    }
+    background: linear-gradient(145deg, #ffffff, #f8f9fa);
+    padding: 1rem;
+    border-radius: 12px;
+    border: 2px solid #e9ecef;
+    margin: 0.5rem 0;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.1);
+    font-family: 'Poppins', sans-serif;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+    color: #2c3e50; /* Dark blue-gray for excellent readability */
+}
+
+.browse-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    border-color: #667eea;
+    color: #1a252f; /* Slightly darker on hover for emphasis */
+}
+
+.browse-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, #667eea, #764ba2);
+}
+
+/* Additional text styling for better visibility */
+.browse-card h1,
+.browse-card h2,
+.browse-card h3,
+.browse-card h4,
+.browse-card h5,
+.browse-card h6 {
+    color: #34495e; /* Darker shade for headings */
+    font-weight: 600;
+}
+
+.browse-card p {
+    color: #2c3e50; /* Main text color */
+    line-height: 1.6;
+}
+
+.browse-card a {
+    color: #667eea; /* Link color matching the gradient */
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.browse-card a:hover {
+    color: #764ba2;
+    text-decoration: underline;
+}
     
     .dialect-input {
         background: linear-gradient(145deg, #fff3cd, #ffeaa7);
@@ -1693,3 +1722,4 @@ if (current_time - st.session_state.last_refresh).seconds > 60:
     st.session_state.uploads = load_uploads()
     st.session_state.image_files = load_images_from_folder()
     st.session_state.last_refresh = current_time
+
