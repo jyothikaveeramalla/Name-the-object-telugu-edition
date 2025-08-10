@@ -219,10 +219,22 @@ st.markdown("""
         box-shadow: 0 5px 15px rgba(0,0,0,0.1);
         font-family: 'Poppins', sans-serif;
         transition: transform 0.3s ease;
+        color: #2c3e50 !important;
     }
     
     .feature-card:hover {
         transform: translateY(-5px);
+    }
+    
+    .feature-card h3 {
+        color: #1a202c !important;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
+    
+    .feature-card p {
+        color: #4a5568 !important;
+        line-height: 1.6;
     }
     
     .browse-card {
