@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Streamlit
+.streamlit/
+
+# Data files (optional - you might want to track sample data)
+data/*.json
+users/*.json
+
+# Images (optional - you might want to exclude user uploads)
+images/*
+!images/.gitkeep
+!images/sample_*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# AI Models (they're downloaded automatically)
+models/
