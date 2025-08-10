@@ -1,0 +1,18 @@
+# Core Streamlit Dependencies
+streamlit>=1.28.0
+pandas>=1.5.0
+pillow>=9.0.0
+numpy>=1.21.0
+
+# AI/ML Dependencies (for image captioning features)
+torch>=2.0.0
+transformers>=4.21.0
+
+# Additional utilities
+uuid
+hashlib
+glob
+datetime
+json
+os
+sys
