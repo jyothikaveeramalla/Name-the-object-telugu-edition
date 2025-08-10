@@ -5,11 +5,28 @@ import json
 import os
 from datetime import datetime
 import numpy as np
-import torch
-from transformers import BlipProcessor, BlipForConditionalGeneration
 import glob
 import hashlib
 import uuid
+import sys
+
+# Handle PyTorch and Transformers import with error handling for Streamlit Cloud
+try:
+    import torch
+    # Set torch to CPU only to avoid CUDA issues on cloud
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    torch_available = True
+except ImportError:
+    st.error("PyTorch not available. Please install PyTorch CPU version.")
+    torch_available = False
+
+try:
+    from transformers import BlipProcessor, BlipForConditionalGeneration
+    transformers_available = True
+except ImportError:
+    st.error("Transformers library not available. Please install transformers.")
+    transformers_available = False
 
 # Configure page
 st.set_page_config(
@@ -399,6 +416,26 @@ st.markdown("""
         margin: 1rem 0;
         border: 2px solid #9c27b0;
     }
+    
+    .error-message {
+        background: linear-gradient(145deg, #f8d7da, #f1aeb5);
+        color: #721c24;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 5px solid #dc3545;
+        margin: 1rem 0;
+        font-family: 'Poppins', sans-serif;
+    }
+    
+    .warning-message {
+        background: linear-gradient(145deg, #fff3cd, #ffeaa7);
+        color: #856404;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 5px solid #ffc107;
+        margin: 1rem 0;
+        font-family: 'Poppins', sans-serif;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -531,8 +568,40 @@ def load_images_from_folder():
     for extension in image_extensions:
         image_files.extend(glob.glob(f"images/{extension}"))
     
+    # If no images, create some sample data
     if not image_files:
-        return ["sample_pot.jpg", "sample_spoon.jpg", "sample_lamp.jpg"]
+        # Create sample images directory structure
+        sample_images = []
+        try:
+            # Try to create some placeholder images if none exist
+            from PIL import Image, ImageDraw, ImageFont
+            
+            sample_objects = [
+                ("sample_pot.jpg", "Traditional Pot", "#8B4513"),
+                ("sample_spoon.jpg", "Wooden Spoon", "#DEB887"), 
+                ("sample_lamp.jpg", "Oil Lamp", "#FFD700")
+            ]
+            
+            for filename, text, color in sample_objects:
+                img = Image.new('RGB', (300, 300), color)
+                draw = ImageDraw.Draw(img)
+                
+                # Try to use a basic font
+                try:
+                    # Use default PIL font
+                    draw.text((50, 150), text, fill='white', anchor='mm')
+                except:
+                    # If font loading fails, just create colored rectangles
+                    pass
+                
+                img.save(f"images/{filename}")
+                sample_images.append(filename)
+            
+            return sample_images
+            
+        except Exception as e:
+            st.warning(f"Could not create sample images: {str(e)}")
+            return []
     
     return sorted([os.path.basename(f) for f in image_files])
 
@@ -540,48 +609,82 @@ def load_images_from_folder():
 if not st.session_state.image_files:
     st.session_state.image_files = load_images_from_folder()
 
-# BLIP Image Captioning Function
+# BLIP Image Captioning Function with error handling
 @st.cache_resource
 def load_blip_model():
-    """Load BLIP model and processor"""
+    """Load BLIP model and processor with error handling"""
+    if not torch_available or not transformers_available:
+        return None, None
+        
     try:
+        # Force CPU usage to avoid CUDA issues on Streamlit Cloud
         processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
         model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+        
+        # Ensure model is on CPU
+        model = model.to('cpu')
+        model.eval()  # Set to evaluation mode
+        
         return processor, model
     except Exception as e:
         st.error(f"Error loading BLIP model: {str(e)}")
+        st.error("This might be due to insufficient memory or missing dependencies on Streamlit Cloud.")
         return None, None
 
 def generate_image_caption(image):
-    """Generate caption using BLIP model"""
+    """Generate caption using BLIP model with comprehensive error handling"""
+    if not torch_available or not transformers_available:
+        return "AI model unavailable: PyTorch or Transformers not installed"
+        
     if st.session_state.blip_processor is None or st.session_state.blip_model is None:
         processor, model = load_blip_model()
         if processor is None or model is None:
-            return "Error: Could not load BLIP model"
+            return "Error: Could not load BLIP model. This might be due to memory constraints on Streamlit Cloud."
         st.session_state.blip_processor = processor
         st.session_state.blip_model = model
     
     try:
+        # Ensure image is in RGB format
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
+        # Process the image
         inputs = st.session_state.blip_processor(image, return_tensors="pt")
         
-        with torch.no_grad():
-            out = st.session_state.blip_model.generate(**inputs, max_length=50, num_beams=5)
+        # Ensure inputs are on CPU
+        if torch_available:
+            inputs = {k: v.to('cpu') for k, v in inputs.items() if hasattr(v, 'to')}
         
-        caption = st.session_state.blip_processor.decode(out[0], skip_special_tokens=True)
+        # Generate caption with error handling
+        with torch.no_grad():
+            output = st.session_state.blip_model.generate(
+                **inputs, 
+                max_length=50, 
+                num_beams=5,
+                do_sample=False,  # Disable sampling for more stable results
+                early_stopping=True
+            )
+        
+        caption = st.session_state.blip_processor.decode(output[0], skip_special_tokens=True)
         return caption
         
     except Exception as e:
-        return f"Error generating caption: {str(e)}"
+        error_msg = f"Error generating caption: {str(e)}"
+        st.warning("AI model encountered an issue. This might be due to memory constraints on Streamlit Cloud.")
+        return error_msg
 
 def calculate_semantic_similarity(telugu_text, english_caption):
     """Mock function for semantic similarity"""
     return np.random.uniform(0.3, 0.95)
 
 def load_ai_models():
-    """Load AI models"""
+    """Load AI models with comprehensive error handling"""
+    if not torch_available or not transformers_available:
+        error_msg = "❌ AI libraries not available" if st.session_state.language == 'english' else "❌ AI లైబ్రరీలు అందుబాటులో లేవు"
+        st.error(error_msg)
+        st.error("Please ensure PyTorch and Transformers are installed. Add them to your requirements.txt file.")
+        return False
+        
     if not st.session_state.ai_model_loaded:
         loading_msg = "🤖 మా AI మోడల్‌ను లోడ్ చేస్తున్నాము..." if st.session_state.language == 'telugu' else "🤖 Loading our magical AI brain..."
         success_msg = "✅ AI మోడల్ విజయవంతంగా లోడ్ అయ్యింది!" if st.session_state.language == 'telugu' else "✅ Model loaded successfully!"
@@ -589,15 +692,21 @@ def load_ai_models():
         error_msg = "❌ AI మోడల్ లోడ్ కాలేదు." if st.session_state.language == 'telugu' else "❌ Failed to load AI model."
         
         with st.spinner(loading_msg):
-            processor, model = load_blip_model()
-            if processor is not None and model is not None:
-                st.session_state.blip_processor = processor
-                st.session_state.blip_model = model
-                st.session_state.ai_model_loaded = True
-                st.success(success_msg)
-                st.info(info_msg)
-            else:
-                st.error(error_msg)
+            try:
+                processor, model = load_blip_model()
+                if processor is not None and model is not None:
+                    st.session_state.blip_processor = processor
+                    st.session_state.blip_model = model
+                    st.session_state.ai_model_loaded = True
+                    st.success(success_msg)
+                    st.info(info_msg)
+                    return True
+                else:
+                    st.error(error_msg)
+                    st.error("This might be due to insufficient memory on Streamlit Cloud. The app will continue without AI features.")
+                    return False
+            except Exception as e:
+                st.error(f"{error_msg} Error: {str(e)}")
                 return False
     return True
 
@@ -614,7 +723,8 @@ def save_uploaded_image(uploaded_file):
             f.write(uploaded_file.getbuffer())
         
         # Add to image files list
-        st.session_state.image_files.append(unique_filename)
+        if unique_filename not in st.session_state.image_files:
+            st.session_state.image_files.append(unique_filename)
         
         return unique_filename
     except Exception as e:
@@ -633,7 +743,8 @@ def save_camera_image(camera_image):
         image.save(image_path)
         
         # Add to image files list
-        st.session_state.image_files.append(unique_filename)
+        if unique_filename not in st.session_state.image_files:
+            st.session_state.image_files.append(unique_filename)
         
         return unique_filename
     except Exception as e:
@@ -715,6 +826,25 @@ def display_browse_card(item, show_comparison=False):
             </p>
         </div>
         """, unsafe_allow_html=True)
+
+# Show dependency status
+if not torch_available or not transformers_available:
+    st.markdown(f"""
+    <div class="warning-message">
+        <h4>⚠️ AI Model Dependencies Missing</h4>
+        <p>Some AI features may not work due to missing dependencies:</p>
+        <ul>
+            <li>PyTorch: {"✅ Available" if torch_available else "❌ Missing"}</li>
+            <li>Transformers: {"✅ Available" if transformers_available else "❌ Missing"}</li>
+        </ul>
+        <p>To enable AI features, add these to your requirements.txt:</p>
+        <code>
+        torch<br>
+        transformers<br>
+        </code>
+        <p>The app will continue to work without AI features.</p>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Authentication UI
 if not st.session_state.authenticated:
@@ -845,6 +975,9 @@ if st.session_state.current_page == "home":
         <div class="feature-card">
             <h3>🧠 {get_text('ai_power')}</h3>
             <p>{get_text('ai_desc')}</p>
+            <p style="font-size: 0.9rem; color: #666;">
+                {"✅ AI Available" if torch_available and transformers_available else "⚠️ Limited AI (Dependencies Missing)"}
+            </p>
         </div>
         """, unsafe_allow_html=True)
     
@@ -975,24 +1108,32 @@ elif st.session_state.current_page == "identify":
             """, unsafe_allow_html=True)
     
     # AI Caption Generation
-    st.markdown(f"""
-    <div class="category-header">
-        <h3>🤖 {get_text('ai_caption')}</h3>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    if st.button("🧠 Generate AI Description"):
-        if load_ai_models():
-            with st.spinner("🤖 AI is analyzing the image..."):
-                try:
-                    caption = generate_image_caption(image)
-                    st.markdown(f"""
-                    <div class="success-message">
-                        <strong>AI Description:</strong> {caption}
-                    </div>
-                    """, unsafe_allow_html=True)
-                except Exception as e:
-                    st.error(f"Error generating caption: {str(e)}")
+    if torch_available and transformers_available:
+        st.markdown(f"""
+        <div class="category-header">
+            <h3>🤖 {get_text('ai_caption')}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("🧠 Generate AI Description"):
+            if load_ai_models():
+                with st.spinner("🤖 AI is analyzing the image..."):
+                    try:
+                        caption = generate_image_caption(image)
+                        st.markdown(f"""
+                        <div class="success-message">
+                            <strong>AI Description:</strong> {caption}
+                        </div>
+                        """, unsafe_allow_html=True)
+                    except Exception as e:
+                        st.error(f"Error generating caption: {str(e)}")
+    else:
+        st.markdown(f"""
+        <div class="warning-message">
+            <h4>⚠️ AI Features Unavailable</h4>
+            <p>AI image description is not available due to missing dependencies. The identification feature still works!</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     # Dialect input form
     st.markdown(f"""
@@ -1172,525 +1313,371 @@ elif st.session_state.current_page == "upload":
         </ul>
     </div>
     """, unsafe_allow_html=True)
+elif st.session_state.current_page == "explore":
+    st.markdown(f"# 🌍 {get_text('explore_data')}")
+    
+    # Overview statistics
+    total_submissions = len(st.session_state.submissions)
+    total_uploads = len(st.session_state.uploads)
+    total_users = len(users)
+    unique_regions = len(set([s.get('region', 'Unknown') for s in st.session_state.submissions] + 
+                            [u.get('region', 'Unknown') for u in st.session_state.uploads]))
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div class="stats-card">
+            <h3>📊</h3>
+            <h2>{total_submissions}</h2>
+            <p>{get_text('identifications')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class="stats-card">
+            <h3>📤</h3>
+            <h2>{total_uploads}</h2>
+            <p>{get_text('uploads')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class="stats-card">
+            <h3>🌍</h3>
+            <h2>{unique_regions}</h2>
+            <p>{get_text('regions')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class="stats-card">
+            <h3>👥</h3>
+            <h2>{total_users}</h2>
+            <p>{get_text('members')}</p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    if total_submissions > 0 or total_uploads > 0:
+        # Regional distribution
+        st.markdown(f"""
+        <div class="category-header">
+            <h3>📍 {get_text('by_region')}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Count submissions by region
+        region_counts = {}
+        for submission in st.session_state.submissions:
+            region = submission.get('region', 'Unknown')
+            region_counts[region] = region_counts.get(region, 0) + 1
+        
+        for upload in st.session_state.uploads:
+            region = upload.get('region', 'Unknown')
+            region_counts[region] = region_counts.get(region, 0) + 1
+        
+        if region_counts:
+            # Create a simple bar chart representation
+            max_count = max(region_counts.values())
+            for region, count in sorted(region_counts.items(), key=lambda x: x[1], reverse=True):
+                bar_width = (count / max_count) * 100
+                st.markdown(f"""
+                <div class="feature-card">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong>📍 {region}</strong>
+                        <span>{count} contributions</span>
+                    </div>
+                    <div style="background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; margin-top: 8px;">
+                        <div style="background: linear-gradient(90deg, #667eea, #764ba2); height: 100%; width: {bar_width}%; transition: width 0.5s ease;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Object type distribution
+        st.markdown(f"""
+        <div class="category-header">
+            <h3>🏷️ {get_text('by_object_type')}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        type_counts = {}
+        for submission in st.session_state.submissions:
+            obj_type = submission.get('object_type', 'Uncategorized')
+            if obj_type:
+                type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
+        
+        for upload in st.session_state.uploads:
+            obj_type = upload.get('category', 'Uncategorized')
+            if obj_type:
+                type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
+        
+        if type_counts:
+            max_count = max(type_counts.values())
+            for obj_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
+                bar_width = (count / max_count) * 100
+                st.markdown(f"""
+                <div class="feature-card">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong>🏷️ {obj_type}</strong>
+                        <span>{count} items</span>
+                    </div>
+                    <div style="background: #e0e0e0; height: 20px; border-radius: 10px; overflow: hidden; margin-top: 8px;">
+                        <div style="background: linear-gradient(90deg, #4ECDC4, #44A08D); height: 100%; width: {bar_width}%; transition: width 0.5s ease;"></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Top contributors
+        st.markdown(f"""
+        <div class="category-header">
+            <h3>🌟 {get_text('member_contributions')}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        contributor_counts = {}
+        for submission in st.session_state.submissions:
+            username = submission.get('username', 'Unknown')
+            contributor_counts[username] = contributor_counts.get(username, 0) + 1
+        
+        for upload in st.session_state.uploads:
+            username = upload.get('username', 'Unknown')
+            contributor_counts[username] = contributor_counts.get(username, 0) + 1
+        
+        if contributor_counts:
+            top_contributors = sorted(contributor_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+            
+            for i, (username, count) in enumerate(top_contributors):
+                medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "🏅"
+                user_region = users.get(username, {}).get('region', 'Unknown Region')
+                
+                st.markdown(f"""
+                <div class="feature-card">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>{medal} {username}</strong>
+                            <br><small>📍 {user_region}</small>
+                        </div>
+                        <span style="font-size: 1.2rem; font-weight: bold; color: #667eea;">{count}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+    else:
+        st.info("No data available yet. Start contributing to see analytics!")
 
 elif st.session_state.current_page == "browse":
-    st.markdown(f"# 🖼️ {get_text('browse_contributions')}")
-    st.markdown(f"### {get_text('learn_from_others')} - Discover how different regions name objects!")
+    st.markdown(f"# 🖼️ {get_text('browse_images')}")
     
-    # Get browse data
+    # Get all browse data
     browse_data = get_browse_data()
     
     if not browse_data:
-        st.info("No contributions yet! Be the first to add some objects and their Telugu names.")
-        st.markdown("---")
+        st.info("No images to browse yet. Upload some images or start identifying objects!")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("🔍 Start Identifying Objects"):
+            if st.button("🔍 Start Identifying"):
                 set_page("identify")
                 st.rerun()
         with col2:
-            if st.button("📤 Upload Your Images"):
+            if st.button("📤 Upload Image"):
                 set_page("upload")
                 st.rerun()
         st.stop()
     
-    # Filter section
-    st.markdown("""
+    # Filters
+    st.markdown(f"""
     <div class="filter-section">
-        <h4>🔧 Filter & Search Options</h4>
+        <h4>🔍 Filter Images</h4>
     </div>
     """, unsafe_allow_html=True)
     
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        # Get all unique regions
-        all_regions = sorted(set([item['region'] for item in browse_data if item['region'] != 'Unknown']))
-        region_filter = st.selectbox(
-            "🌍 Filter by Region",
-            ["All Regions"] + all_regions,
-            key="browse_region_filter"
+        # Region filter
+        all_regions = sorted(set([item.get('region', 'Unknown') for item in browse_data]))
+        selected_regions = st.multiselect(
+            "📍 Filter by Region",
+            options=all_regions,
+            default=all_regions,
+            key="region_filter"
         )
     
     with col2:
-        # Get all unique object types
-        all_types = sorted(set([item['object_type'] for item in browse_data if item['object_type'] not in ['Uncategorized', '']]))
-        type_filter = st.selectbox(
+        # Object type filter
+        all_types = sorted(set([item.get('object_type', 'Uncategorized') for item in browse_data]))
+        selected_types = st.multiselect(
             "🏷️ Filter by Type",
-            ["All Types"] + all_types,
-            key="browse_type_filter"
+            options=all_types,
+            default=all_types,
+            key="type_filter"
         )
     
     with col3:
-        # Get all unique contributors
-        all_contributors = sorted(set([item['username'] for item in browse_data if item['username'] != 'Anonymous']))
-        user_filter = st.selectbox(
-            "👤 Filter by User",
-            ["All Users"] + all_contributors,
-            key="browse_user_filter"
+        # Source filter
+        source_options = ['identification', 'upload', 'camera']
+        selected_sources = st.multiselect(
+            "📸 Filter by Source",
+            options=source_options,
+            default=source_options,
+            key="source_filter"
         )
     
     with col4:
         # Search by Telugu word
         search_term = st.text_input(
-            "🔍 Search Telugu Words",
-            placeholder="ముద్ద, గిన్నె, లాంప్...",
-            key="browse_search"
-        )
-    
-    # View mode selection
-    st.markdown("---")
-    col1, col2 = st.columns([3, 1])
-    
-    with col1:
-        view_mode = st.radio(
-            "📋 View Mode:",
-            ["📱 Gallery View", "📝 List View", "🔍 Comparison View", "🌟 Learning Mode"],
-            horizontal=True,
-            key="browse_view_mode"
-        )
-    
-    with col2:
-        sort_option = st.selectbox(
-            "📊 Sort by:",
-            ["Newest First", "Oldest First", "A-Z (Telugu)", "Z-A (Telugu)", "By Region"],
-            key="browse_sort"
+            "🔍 Search Telugu Word",
+            placeholder="తెలుగు పదం వెతకండి...",
+            key="search_filter"
         )
     
     # Apply filters
     filtered_data = browse_data
     
-    if region_filter != "All Regions":
-        filtered_data = [item for item in filtered_data if item['region'] == region_filter]
+    if selected_regions:
+        filtered_data = [item for item in filtered_data if item.get('region') in selected_regions]
     
-    if type_filter != "All Types":
-        filtered_data = [item for item in filtered_data if item['object_type'] == type_filter]
+    if selected_types:
+        filtered_data = [item for item in filtered_data if item.get('object_type') in selected_types]
     
-    # Continue from the filter section in browse page
-    if user_filter != "All Users":
-        filtered_data = [item for item in filtered_data if item['username'] == user_filter]
+    if selected_sources:
+        filtered_data = [item for item in filtered_data if item.get('source') in selected_sources]
     
     if search_term:
-        filtered_data = [item for item in filtered_data if search_term.lower() in item['telugu_word'].lower()]
+        filtered_data = [item for item in filtered_data 
+                        if search_term.lower() in item.get('telugu_word', '').lower()]
     
-    # Apply sorting
-    if sort_option == "Newest First":
-        filtered_data = sorted(filtered_data, key=lambda x: x['timestamp'], reverse=True)
+    # Sort options
+    sort_option = st.selectbox(
+        "🔄 Sort by",
+        ["Latest First", "Oldest First", "A-Z (Telugu)", "Z-A (Telugu)", "Region", "Type"],
+        key="sort_option"
+    )
+    
+    if sort_option == "Latest First":
+        filtered_data = sorted(filtered_data, key=lambda x: x.get('timestamp', ''), reverse=True)
     elif sort_option == "Oldest First":
-        filtered_data = sorted(filtered_data, key=lambda x: x['timestamp'])
+        filtered_data = sorted(filtered_data, key=lambda x: x.get('timestamp', ''))
     elif sort_option == "A-Z (Telugu)":
-        filtered_data = sorted(filtered_data, key=lambda x: x['telugu_word'])
+        filtered_data = sorted(filtered_data, key=lambda x: x.get('telugu_word', ''))
     elif sort_option == "Z-A (Telugu)":
-        filtered_data = sorted(filtered_data, key=lambda x: x['telugu_word'], reverse=True)
-    elif sort_option == "By Region":
-        filtered_data = sorted(filtered_data, key=lambda x: x['region'])
+        filtered_data = sorted(filtered_data, key=lambda x: x.get('telugu_word', ''), reverse=True)
+    elif sort_option == "Region":
+        filtered_data = sorted(filtered_data, key=lambda x: x.get('region', ''))
+    elif sort_option == "Type":
+        filtered_data = sorted(filtered_data, key=lambda x: x.get('object_type', ''))
     
-    # Display results count
-    st.markdown(f"**📊 Showing {len(filtered_data)} of {len(browse_data)} contributions**")
-    
-    if not filtered_data:
-        st.warning("No items match your current filters. Try adjusting your search criteria.")
-        st.stop()
-    
-    # Display content based on view mode
-    if view_mode == "📱 Gallery View":
-        # Gallery view with cards
-        items_per_page = 12
-        total_pages = (len(filtered_data) + items_per_page - 1) // items_per_page
-        
-        if 'browse_page' not in st.session_state:
-            st.session_state.browse_page = 0
-        
-        # Pagination controls
-        if total_pages > 1:
-            col1, col2, col3, col4, col5 = st.columns(5)
-            with col1:
-                if st.button("⬅️ Previous", disabled=st.session_state.browse_page == 0):
-                    st.session_state.browse_page = max(0, st.session_state.browse_page - 1)
-                    st.rerun()
-            
-            with col3:
-                st.markdown(f"**Page {st.session_state.browse_page + 1} of {total_pages}**")
-            
-            with col5:
-                if st.button("Next ➡️", disabled=st.session_state.browse_page >= total_pages - 1):
-                    st.session_state.browse_page = min(total_pages - 1, st.session_state.browse_page + 1)
-                    st.rerun()
-        
-        # Display items for current page
-        start_idx = st.session_state.browse_page * items_per_page
-        end_idx = min(start_idx + items_per_page, len(filtered_data))
-        page_items = filtered_data[start_idx:end_idx]
-        
-        # Display in 3 columns
-        for i in range(0, len(page_items), 3):
-            cols = st.columns(3)
-            for j, col in enumerate(cols):
-                if i + j < len(page_items):
-                    with col:
-                        display_browse_card(page_items[i + j])
-    
-    elif view_mode == "📝 List View":
-        # List view with compact display
-        for item in filtered_data[:50]:  # Limit to 50 items for performance
-            col1, col2 = st.columns([1, 4])
-            
-            with col1:
-                try:
-                    image = Image.open(f"images/{item['image_name']}")
-                    st.image(image, use_container_width=True)
-                except:
-                    st.markdown("🖼️ *No image*")
-            
-            with col2:
-                st.markdown(f"""
-                **🏷️ {item['telugu_word']}** | 
-                📍 {item['region']} | 
-                🏷️ {item['object_type']} | 
-                👤 {item['username']}
-                """)
-                
-                # Format timestamp
-                try:
-                    formatted_time = pd.to_datetime(item['timestamp']).strftime('%Y-%m-%d %H:%M')
-                    st.caption(f"🕒 Added: {formatted_time}")
-                except:
-                    st.caption("🕒 Added: Unknown time")
-            
-            st.markdown("---")
-    
-    elif view_mode == "🔍 Comparison View":
-        # Group by image to show different names for same object
-        st.markdown("### 🔍 See how different regions name the same objects:")
-        
-        # Group items by image
-        image_groups = {}
-        for item in filtered_data:
-            image_name = item['image_name']
-            if image_name not in image_groups:
-                image_groups[image_name] = []
-            image_groups[image_name].append(item)
-        
-        # Show only images with multiple names
-        multi_name_images = {k: v for k, v in image_groups.items() if len(v) > 1}
-        
-        if not multi_name_images:
-            st.info("No objects with multiple names found in current filters. Try broadening your search!")
-        else:
-            for image_name, items in list(multi_name_images.items())[:10]:  # Limit to 10 for performance
-                st.markdown(f"""
-                <div class="comparison-section">
-                    <h4>🖼️ Different names for the same object:</h4>
-                </div>
-                """, unsafe_allow_html=True)
-                
-                col1, col2 = st.columns([1, 2])
-                
-                with col1:
-                    try:
-                        image = Image.open(f"images/{image_name}")
-                        st.image(image, use_container_width=True)
-                    except:
-                        st.markdown("🖼️ *Image not available*")
-                
-                with col2:
-                    for item in items:
-                        st.markdown(f"""
-                        <div class="word-comparison">
-                            <strong>🏷️ {item['telugu_word']}</strong><br>
-                            📍 Region: {item['region']}<br>
-                            👤 By: {item['username']}<br>
-                            🏷️ Type: {item['object_type']}
-                        </div>
-                        """, unsafe_allow_html=True)
-                
-                st.markdown("---")
-    
-    elif view_mode == "🌟 Learning Mode":
-        # Interactive learning mode with random objects
-        st.markdown("### 🌟 Learning Mode: Test Your Knowledge!")
-        
-        if st.button("🎲 Show Random Object"):
-            st.session_state.learning_item = np.random.choice(filtered_data)
-            st.rerun()
-        
-        if hasattr(st.session_state, 'learning_item'):
-            item = st.session_state.learning_item
-            
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                try:
-                    image = Image.open(f"images/{item['image_name']}")
-                    st.image(image, caption="What do you call this in your dialect?", use_container_width=True)
-                except:
-                    st.markdown("🖼️ *Image not available*")
-            
-            with col2:
-                st.markdown("### 🤔 Think about it...")
-                
-                if st.button("🔍 Show Answer"):
-                    st.markdown(f"""
-                    <div class="success-message">
-                        <h4>Answer:</h4>
-                        <p><strong>🏷️ Telugu Name:</strong> {item['telugu_word']}</p>
-                        <p><strong>📍 Region:</strong> {item['region']}</p>
-                        <p><strong>🏷️ Category:</strong> {item['object_type']}</p>
-                        <p><strong>👤 Contributed by:</strong> {item['username']}</p>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                # Show similar objects
-                similar_objects = [i for i in filtered_data if i['object_type'] == item['object_type'] and i['id'] != item['id']]
-                if similar_objects:
-                    st.markdown("#### 🔗 Similar Objects:")
-                    for similar in similar_objects[:3]:
-                        st.markdown(f"• **{similar['telugu_word']}** ({similar['region']})")
-
-elif st.session_state.current_page == "explore":
-    st.markdown(f"# 🌍 {get_text('explore_data')}")
-    st.markdown("### Discover insights from our community contributions!")
-    
-    # Load data for analysis
-    submissions = st.session_state.submissions
-    uploads = st.session_state.uploads
-    users = load_users()
-    
-    # Overall statistics
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        total_identifications = len(submissions)
-        st.markdown(f"""
-        <div class="stats-card">
-            <h2>{total_identifications}</h2>
-            <p>🔍 Total Identifications</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        total_uploads = len(uploads)
-        st.markdown(f"""
-        <div class="stats-card">
-            <h2>{total_uploads}</h2>
-            <p>📤 Images Uploaded</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        unique_regions = len(set([s.get('region', 'Unknown') for s in submissions] + [u.get('region', 'Unknown') for u in uploads]))
-        st.markdown(f"""
-        <div class="stats-card">
-            <h2>{unique_regions}</h2>
-            <p>🌍 {get_text('regions')}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col4:
-        total_users = len(users)
-        st.markdown(f"""
-        <div class="stats-card">
-            <h2>{total_users}</h2>
-            <p>👥 {get_text('members')}</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    # Charts and visualizations
-    st.markdown("---")
-    
-    if submissions:
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown(f"""
-            <div class="category-header">
-                <h4>📊 {get_text('by_region')}</h4>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Create region distribution
-            region_counts = {}
-            for submission in submissions:
-                region = submission.get('region', 'Unknown')
-                region_counts[region] = region_counts.get(region, 0) + 1
-            
-            if region_counts:
-                regions_df = pd.DataFrame(list(region_counts.items()), columns=['Region', 'Count'])
-                st.bar_chart(regions_df.set_index('Region'))
-                
-                # Show top regions
-                sorted_regions = sorted(region_counts.items(), key=lambda x: x[1], reverse=True)
-                st.markdown("**🏆 Top Contributing Regions:**")
-                for i, (region, count) in enumerate(sorted_regions[:5], 1):
-                    st.markdown(f"{i}. **{region}**: {count} contributions")
-        
-        with col2:
-            st.markdown(f"""
-            <div class="category-header">
-                <h4>🏷️ {get_text('by_object_type')}</h4>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Create object type distribution
-            type_counts = {}
-            for submission in submissions:
-                obj_type = submission.get('object_type', 'Uncategorized')
-                if obj_type.strip():
-                    type_counts[obj_type] = type_counts.get(obj_type, 0) + 1
-            
-            if type_counts:
-                types_df = pd.DataFrame(list(type_counts.items()), columns=['Object Type', 'Count'])
-                st.bar_chart(types_df.set_index('Object Type'))
-                
-                # Show top categories
-                sorted_types = sorted(type_counts.items(), key=lambda x: x[1], reverse=True)
-                st.markdown("**🏆 Popular Object Categories:**")
-                for i, (obj_type, count) in enumerate(sorted_types[:5], 1):
-                    st.markdown(f"{i}. **{obj_type}**: {count} items")
-    
-    # Member contributions leaderboard
-    st.markdown("---")
+    # Display results
     st.markdown(f"""
-    <div class="category-header">
-        <h4>🏆 {get_text('member_contributions')}</h4>
+    <div style="text-align: center; margin: 20px 0;">
+        <h3>Found {len(filtered_data)} images</h3>
     </div>
     """, unsafe_allow_html=True)
     
-    # Calculate user contributions
-    user_contributions = {}
-    for submission in submissions:
-        username = submission.get('username', 'Anonymous')
-        if username != 'Anonymous':
-            user_contributions[username] = user_contributions.get(username, 0) + 1
-    
-    for upload in uploads:
-        username = upload.get('username', 'Anonymous')
-        if username != 'Anonymous':
-            user_contributions[username] = user_contributions.get(username, 0) + 1
-    
-    if user_contributions:
-        sorted_contributors = sorted(user_contributions.items(), key=lambda x: x[1], reverse=True)
+    if filtered_data:
+        # Pagination
+        items_per_page = 10
+        total_pages = (len(filtered_data) - 1) // items_per_page + 1
         
-        col1, col2 = st.columns(2)
+        if 'browse_page' not in st.session_state:
+            st.session_state.browse_page = 1
+        
+        # Page navigation
+        if total_pages > 1:
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+            
+            with col1:
+                if st.button("⬅️ Previous", disabled=st.session_state.browse_page <= 1):
+                    st.session_state.browse_page -= 1
+                    st.rerun()
+            
+            with col2:
+                if st.button("⏮️ First", disabled=st.session_state.browse_page <= 1):
+                    st.session_state.browse_page = 1
+                    st.rerun()
+            
+            with col3:
+                st.markdown(f"""
+                <div style="text-align: center; padding: 5px;">
+                    Page {st.session_state.browse_page} of {total_pages}
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col4:
+                if st.button("⏭️ Last", disabled=st.session_state.browse_page >= total_pages):
+                    st.session_state.browse_page = total_pages
+                    st.rerun()
+            
+            with col5:
+                if st.button("Next ➡️", disabled=st.session_state.browse_page >= total_pages):
+                    st.session_state.browse_page += 1
+                    st.rerun()
+        
+        # Calculate slice for current page
+        start_idx = (st.session_state.browse_page - 1) * items_per_page
+        end_idx = start_idx + items_per_page
+        page_items = filtered_data[start_idx:end_idx]
+        
+        # Display items
+        for item in page_items:
+            with st.container():
+                display_browse_card(item)
+                st.markdown("---")
+    
+    else:
+        st.info("No images match your filters. Try adjusting the filter criteria.")
+    
+    # Quick stats for current view
+    if filtered_data:
+        st.markdown("### 📊 Current View Statistics")
+        col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.markdown("### 🥇 Top Contributors")
-            for i, (username, count) in enumerate(sorted_contributors[:10], 1):
-                user_region = users.get(username, {}).get('region', 'Unknown')
-                medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-                st.markdown(f"{medal} **{username}** ({user_region}): {count} contributions")
+            unique_regions_filtered = len(set([item.get('region') for item in filtered_data]))
+            st.metric("Regions", unique_regions_filtered)
         
         with col2:
-            st.markdown("### 📈 Contribution Timeline")
-            # Create timeline of contributions
-            daily_contributions = {}
-            
-            for submission in submissions:
-                try:
-                    date = pd.to_datetime(submission.get('timestamp', '')).date()
-                    daily_contributions[date] = daily_contributions.get(date, 0) + 1
-                except:
-                    continue
-            
-            if daily_contributions:
-                timeline_df = pd.DataFrame(list(daily_contributions.items()), columns=['Date', 'Contributions'])
-                timeline_df = timeline_df.sort_values('Date')
-                st.line_chart(timeline_df.set_index('Date'))
-    
-    # Regional comparison
-    st.markdown("---")
-    st.markdown("### 🗺️ Regional Word Variations")
-    
-    # Find objects with multiple regional names
-    object_variations = {}
-    for submission in submissions:
-        image_name = submission.get('image_name', '')
-        region = submission.get('region', 'Unknown')
-        telugu_word = submission.get('telugu_word', '')
+            unique_types_filtered = len(set([item.get('object_type') for item in filtered_data]))
+            st.metric("Object Types", unique_types_filtered)
         
-        if image_name and telugu_word:
-            if image_name not in object_variations:
-                object_variations[image_name] = {}
-            object_variations[image_name][region] = telugu_word
-    
-    # Show objects with multiple regional names
-    multi_regional_objects = {k: v for k, v in object_variations.items() if len(v) > 1}
-    
-    if multi_regional_objects:
-        st.markdown("**🔍 Objects with Regional Variations:**")
-        
-        for i, (image_name, variations) in enumerate(list(multi_regional_objects.items())[:5], 1):
-            with st.expander(f"Object #{i} - {len(variations)} regional names"):
-                col1, col2 = st.columns([1, 2])
-                
-                with col1:
-                    try:
-                        image = Image.open(f"images/{image_name}")
-                        st.image(image, use_container_width=True)
-                    except:
-                        st.markdown("🖼️ *Image not available*")
-                
-                with col2:
-                    st.markdown("**Regional Names:**")
-                    for region, word in variations.items():
-                        st.markdown(f"• **{region}**: {word}")
-    else:
-        st.info("No regional variations found yet. More contributions will reveal interesting dialect differences!")
-    
-    # Activity insights
-    st.markdown("---")
-    st.markdown("### 📊 Community Insights")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Most active time analysis
-        if submissions:
-            hour_activity = {}
-            for submission in submissions:
-                try:
-                    hour = pd.to_datetime(submission.get('timestamp', '')).hour
-                    hour_activity[hour] = hour_activity.get(hour, 0) + 1
-                except:
-                    continue
-            
-            if hour_activity:
-                st.markdown("**⏰ Most Active Hours:**")
-                sorted_hours = sorted(hour_activity.items(), key=lambda x: x[1], reverse=True)
-                for hour, count in sorted_hours[:3]:
-                    time_period = "Morning" if 6 <= hour < 12 else "Afternoon" if 12 <= hour < 18 else "Evening" if 18 <= hour < 22 else "Night"
-                    st.markdown(f"• **{hour}:00** ({time_period}): {count} contributions")
-    
-    with col2:
-        # Diversity metrics
-        unique_words = len(set([s.get('telugu_word', '') for s in submissions if s.get('telugu_word', '').strip()]))
-        unique_objects = len(set([s.get('image_name', '') for s in submissions if s.get('image_name', '')]))
-        
-        st.markdown("**🌈 Diversity Metrics:**")
-        st.markdown(f"• **Unique Telugu Words**: {unique_words}")
-        st.markdown(f"• **Unique Objects**: {unique_objects}")
-        if unique_objects > 0:
-            avg_names_per_object = len(submissions) / unique_objects
-            st.markdown(f"• **Avg Names per Object**: {avg_names_per_object:.1f}")
+        with col3:
+            unique_contributors = len(set([item.get('username') for item in filtered_data]))
+            st.metric("Contributors", unique_contributors)
 
-# Footer
+# Bottom credits and info
 st.markdown("---")
 st.markdown(f"""
-<div style="text-align: center; padding: 2rem; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 10px; margin-top: 2rem;">
-    <h3>🙏 Thank you for preserving Telugu heritage!</h3>
-    <p>Every word you contribute helps keep our beautiful language and dialects alive for future generations.</p>
-    <p><strong>మా భాషా వైభవాన్ని కాపాడుతున్న మీకు కృతజ్ఞతలు! 🌟</strong></p>
+<div style="text-align: center; color: #666; font-size: 0.9rem; padding: 20px;">
+    <p>🏛️ తెలుగు లెన్స్ - Preserving Telugu Heritage Through Technology</p>
+    <p>Made with ❤️ for the Telugu community | Current Language: {'తెలుగు' if st.session_state.language == 'telugu' else 'English'}</p>
+    <p>Total Images: {len(st.session_state.image_files)} | Total Contributions: {len(st.session_state.submissions) + len(st.session_state.uploads)}</p>
 </div>
 """, unsafe_allow_html=True)
 
 # Debug information (only show in development)
 if st.sidebar.checkbox("🔧 Debug Info", value=False):
-    st.sidebar.markdown("### Debug Information")
-    st.sidebar.write(f"Current page: {st.session_state.current_page}")
-    st.sidebar.write(f"Authenticated: {st.session_state.authenticated}")
-    st.sidebar.write(f"Username: {st.session_state.username}")
-    st.sidebar.write(f"Language: {st.session_state.language}")
-    st.sidebar.write(f"Image files: {len(st.session_state.image_files)}")
-    st.sidebar.write(f"Submissions: {len(st.session_state.submissions)}")
-    st.sidebar.write(f"Uploads: {len(st.session_state.uploads)}")
-    st.sidebar.write(f"AI Model Loaded: {st.session_state.ai_model_loaded}")
+    with st.sidebar.expander("Debug Information"):
+        st.write("Current Page:", st.session_state.current_page)
+        st.write("Language:", st.session_state.language)
+        st.write("User:", st.session_state.username)
+        st.write("Image Files Count:", len(st.session_state.image_files))
+        st.write("Submissions Count:", len(st.session_state.submissions))
+        st.write("Uploads Count:", len(st.session_state.uploads))
+        st.write("AI Model Loaded:", st.session_state.ai_model_loaded)
+        st.write("PyTorch Available:", torch_available)
+        st.write("Transformers Available:", transformers_available)
+
+# Auto-refresh data periodically (every 60 seconds)
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+
+current_time = datetime.now()
+if (current_time - st.session_state.last_refresh).seconds > 60:
+    # Refresh data from files
+    st.session_state.submissions = load_submissions()
+    st.session_state.uploads = load_uploads()
+    st.session_state.image_files = load_images_from_folder()
+    st.session_state.last_refresh = current_time
